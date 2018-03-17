@@ -32,6 +32,14 @@ def randomExperiment():
 # - m - The map at time 't'
 # Returns: m_(t+1) - The map at time 't+1'
 def mapping(z, p, transformation, m):
+	# Transform z to global frame
+
+	# Remove scan points that are too close, far, or hit the ground
+
+	# Use getMapCellsFromRay() to get occupied cells and free cells
+
+	# Update log-odds ratio in m
+
 	pass
 
 # - p - Pose of all 'n' particles at time 't'
@@ -39,6 +47,10 @@ def mapping(z, p, transformation, m):
 # - o_t1 - odometery at time 't+1' - confirm whether relative and which reference
 # Returns: Pose of all 'n' particles at time 't+1'
 def localizationPrediction(p, o_t, o_t1):
+	# Get some random noise for each particle
+
+	# p_t+1 = p_t ++ (o_t+1 -- o_t) ++ noise
+
 	pass
 
 # - p - Pose of all 'n' particles at time 't+1'
@@ -48,6 +60,16 @@ def localizationPrediction(p, o_t, o_t1):
 # transformation - to transform the laser scan from head to global frame
 # Returns: w_(t+1) - Weight of all 'n' particles at time 't+1'
 def localizationUpdate(p, w, z, m, transformation):
+	# For each particle
+
+		# Transform z to global frame
+
+		# Remove scan points that are too close, far, or hit the ground
+
+		# Compute correlation of the scan points with the map
+
+		# Update the weight of the particle
+
 	pass
 
 # - p - Pose of all 'n' particles at time 't+1'
