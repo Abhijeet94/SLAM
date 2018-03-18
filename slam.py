@@ -16,60 +16,6 @@ from utils import *
 
 ################################################################################################
 
-def replayLidarData():
-	lidar0 = ld.get_lidar('Proj4_2018_Train/data/train_lidar0')
-	pdb.set_trace()
-	util.replay_lidar(lidar0)
-
-def randomExperiment():
-	joint = ld.get_joint('Proj4_2018_Train/data/train_joint3')
-	key_names_joint = ['acc', 'ts', 'rpy', 'gyro', 'pos', 'ft_l', 'ft_r', 'head_angles']
-	print joint['head_angles'].shape
-	# print util.get_joint_index(joint)
-
-################################################################################################
-
-def showMaps(P, W, Map):
-	pass
-
-def transformLidarH2G(transfAngles, p, z):
-	# Transform z to global frame from head frame
-	R = np.array([[np.cos(theta[jtheta]), -np.sin(theta[jtheta])], [np.sin(theta[jtheta]), np.cos(theta[jtheta])]])
-
-def getGroundIndices(transfAngles, p, z, angles):
-	pass
-
-def getGoodIndicesLaserScan(transfAngles, p, z, angles):
-	# Indices (of angles or z) that are too close, far, or hit the ground
-	indValid = np.logical_and((z < 30), (z > 0.1))
-	indGround = getGroundIndices(angles, z)
-	return np.logical_and(indValid, indGround)
-
-def updateMapLogOdds(m, z_occCells, z_freeCells):
-	pass
-	
-def getMLEParticle(P, W):
-	return P[np.argmax(W)]
-
-def getDataAtSameTimestamp(lidar, joint):
-	jointTimeSeries = joint['ts'][0]
-
-	lidarTimesSeries = np.zeros(len(lidar))
-	for i in range(len(lidar)):
-		lidarTimesSeries[i] = lidar[i]['t'][0][0]
-
-	ji, li = getSynchArrays(jointTimeSeries, lidarTimesSeries)
-
-	joint['ts'][:] = joint['ts'][:][ji]
-	joint['rpy'][:] = joint['rpy'][:][ji]
-	joint['head_angles'][:] = joint['head_angles'][:][ji]
-	joint['acc'][:] = joint['acc'][:][ji]
-	joint['gyro'][:] = joint['gyro'][:][ji]
-
-	lidar = lidar[li]
-
-	return lidar, joint
-
 def initSlam(lidar, joint, numParticles):
 	P = np.zeros((numParticles, 3))
 	W = np.ones(numParticles) * (1.0/numParticles)
@@ -88,7 +34,7 @@ def initSlam(lidar, joint, numParticles):
 	return P, W, MAP
 
 ################################################################################################
- 
+
 # - z - represents the laser scan (head frame) at time 't'
 # - p - is the MLE particle at time 't'
 # transfAngles - (head angles, rpy) used to transform the laser scan from head to global frame
@@ -103,7 +49,8 @@ def mapping(z, p, transfAngles, m):
 	angles = angles[zi]
 
 	# Transform z to global frame
-	z_occCells = transformLidarH2G(transfAngles, p, z, angles)
+	z_globalFrame = transformLidarH2G(transfAngles, p, z, angles)
+	z_occCells = getCellsFromPhysicalGlobalCoordinates(z_globalFrame, m)
 
 	# Use getMapCellsFromRay() to get free cells
 	z_freeCells = MU2.getMapCellsFromRay(p[0], p[1], z_occCells[0], z_occCells[1])
@@ -113,16 +60,22 @@ def mapping(z, p, transfAngles, m):
 	
 	return m_new
 
-# - p - Pose of all 'n' particles at time 't'
+# - P - Pose of all 'n' particles at time 't'
 # - o_t - odometery at time 't' - confirm whether relative and which reference
 # - o_t1 - odometery at time 't+1' - confirm whether relative and which reference
 # Returns: Pose of all 'n' particles at time 't+1'
-def localizationPrediction(p, o_t, o_t1):
-	# Get some random noise for each particle
+def localizationPrediction(P, o_t, o_t1):
+	PP = np.zeros(P.shape)
 
-	# p_t+1 = p_t ++ (o_t+1 -- o_t) ++ noise
+	# For each particle
+	for i in range(P.shape[0]):
+		# Get some random noise for each particle
+		noise = getGaussianNoise().reshape(3, 1)
 
-	pass
+		# p_t+1 = p_t ++ (o_t+1 -- o_t) ++ noise
+		PP[i] = smartPlus(smartPlus(P[i], smartMinus(o_t1, o_t)), noise)
+
+	return PP
 
 # - P - Pose of all 'n' particles at time 't+1'
 # - W - Weight of all 'n' particles at time 't'
@@ -131,26 +84,53 @@ def localizationPrediction(p, o_t, o_t1):
 # transfAngles - (head angles, rpy) used to transform the laser scan from head to global frame
 # Returns: w_(t+1) - Weight of all 'n' particles at time 't+1'
 def localizationUpdate(P, W, z, m, transfAngles):
+	logWW = np.log(W)
+
 	# For each particle
 	for i in range(P.shape[0]):
-
-		# Transform z to global frame
-		pass
+		angles = np.array(np.arange(-135,135.25,0.25)*np.pi/180.)
 
 		# Remove scan points that are too close, far, or hit the ground
+		zi = getGoodIndicesLaserScan(transfAngles, p, z, angles)
+		z = z[zi]
+		angles = angles[zi]
+
+		# Transform z to global frame
+		z_occCells = transformLidarH2G(transfAngles, p, z, angles)
 
 		# Compute correlation of the scan points with the map
+		xs0 = np.array([z*np.cos(angles)]); # they are in local frame, use the correct frame!
+		ys0 = np.array([z*np.sin(angles)]); # they are in local frame, use the correct frame!
+		Y = np.concatenate([np.concatenate([xs0,ys0],axis=0),np.zeros(xs0.shape)],axis=0)
+		x_im = np.arange(m['xmin'], m['xmax'] + m['res'], m['res'])
+		y_im = np.arange(m['ymin'], m['ymax'] + m['res'], m['res'])
+		c = MU2.mapCorrelation(m['map'], x_im, y_im, Y[0:3,:], 9, 9)
 
 		# Update the weight of the particle
+		logWW[i] = logWW[i] + calCorrelationValue(c)
 
-	pass
+	logWW = logWW - logsumexp(logWW)
+	return np.exp(logWW)
 
-# - p - Pose of all 'n' particles at time 't+1'
-# - w - Weight of all 'n' particles at time 't+1'
+# - P - Pose of all 'n' particles at time 't+1'
+# - W - Weight of all 'n' particles at time 't+1'
 # - numParticles - number of particles to return
-# Returns: (p, w) - new particles and their weights
-def resampleIfNeeded(p, w, numParticles):
-	pass
+# Returns: (P, W) - new particles and their weights
+def resampleIfNeeded(P, W, numParticles):
+	nEffective = 1.0/(np.sum(np.square(W)))
+	nThreshold = numParticles * 0.4
+
+	if nEffective < nThreshold:
+		PP = np.zeros(P.shape)
+		WW = np.ones(numParticles) * (1.0/numParticles)
+
+		for i in range(numParticles):
+			PP[i] = P[np.argmin((np.cumsum(W) * 1.0 / np.sum(W)) < np.random.random_sample())]
+
+		P = PP
+		W = WW
+
+	return (P, W)
 
 def slam(lidar, joint):
 	numParticles = 200
@@ -159,7 +139,7 @@ def slam(lidar, joint):
 
 	for t in xrange(len(lidar) - 1):
 		z_headFrame = lidar[t]['scan'][0]
-		trans = (joint['head_angles'], joint['rpy'])
+		trans = (joint['head_angles'][0][t], joint['head_angles'][1][t], joint['rpy'][0][t], joint['rpy'][1][t], joint['rpy'][2][t])
 
 		p_mle = getMLEParticle(P, W) 
 
