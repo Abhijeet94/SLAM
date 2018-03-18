@@ -4,14 +4,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import io
 import matplotlib.image as mpimg
-import MapUtils as MU
-import MapUtils2 as MU2
 
 sys.path.insert(0,'Proj4_2018_Train')
 sys.path.insert(0,'Proj4_2018_Train/MapUtils')
 
 import load_data as ld
 import p4_util as util
+import MapUtils as MU
+import MapUtils2 as MU2
 from utils import *
 
 ################################################################################################
@@ -41,7 +41,7 @@ def initSlam(lidar, joint, numParticles):
 # - m - The map at time 't'
 # Returns: m_(t+1) - The map at time 't+1'
 def mapping(z, p, transfAngles, m):
-	angles = np.array(np.arange(-135,135.25,0.25)*np.pi/180.)
+	angles = np.array(np.arange(135,-135.25,-0.25)*np.pi/180.)
 
 	# Remove scan points that are too close, far, or hit the ground
 	zi = getGoodIndicesLaserScan(transfAngles, p, z, angles)
@@ -53,7 +53,9 @@ def mapping(z, p, transfAngles, m):
 	z_occCells = getCellsFromPhysicalGlobalCoordinates(z_globalFrame, m)
 
 	# Use getMapCellsFromRay() to get free cells
-	z_freeCells = MU2.getMapCellsFromRay(p[0], p[1], z_occCells[0], z_occCells[1])
+	poseXcell = np.ceil((p[0] - m['xmin']) / m['res']) - 1
+	poseYcell = np.ceil((p[1] - m['ymin']) / m['res']) - 1
+	z_freeCells = MU2.getMapCellsFromRay(poseXcell, poseYcell, z_occCells[0].tolist(), z_occCells[1].tolist())
 
 	# Update log-odds ratio in m
 	m_new = updateMapLogOdds(m, z_occCells, z_freeCells)
@@ -73,7 +75,7 @@ def localizationPrediction(P, o_t, o_t1):
 		noise = getGaussianNoise().reshape(3, 1)
 
 		# p_t+1 = p_t ++ (o_t+1 -- o_t) ++ noise
-		PP[i] = smartPlus(smartPlus(P[i], smartMinus(o_t1, o_t)), noise)
+		PP[i] = smartPlus(smartPlus(P[i], smartMinus(o_t1, o_t)), noise).reshape(3)
 
 	return PP
 
@@ -88,23 +90,22 @@ def localizationUpdate(P, W, z, m, transfAngles):
 
 	# For each particle
 	for i in range(P.shape[0]):
-		angles = np.array(np.arange(-135,135.25,0.25)*np.pi/180.)
+		angles = np.array(np.arange(135,-135.25,-0.25)*np.pi/180.)
 
 		# Remove scan points that are too close, far, or hit the ground
-		zi = getGoodIndicesLaserScan(transfAngles, p, z, angles)
+		zi = getGoodIndicesLaserScan(transfAngles, P[i], z, angles)
 		z = z[zi]
 		angles = angles[zi]
 
 		# Transform z to global frame
-		z_occCells = transformLidarH2G(transfAngles, p, z, angles)
+		z_globalFrame = transformLidarH2G(transfAngles, P[i], z, angles)
 
 		# Compute correlation of the scan points with the map
-		xs0 = np.array([z*np.cos(angles)]); # they are in local frame, use the correct frame!
-		ys0 = np.array([z*np.sin(angles)]); # they are in local frame, use the correct frame!
-		Y = np.concatenate([np.concatenate([xs0,ys0],axis=0),np.zeros(xs0.shape)],axis=0)
 		x_im = np.arange(m['xmin'], m['xmax'] + m['res'], m['res'])
 		y_im = np.arange(m['ymin'], m['ymax'] + m['res'], m['res'])
-		c = MU2.mapCorrelation(m['map'], x_im, y_im, Y[0:3,:], 9, 9)
+		x_range = np.arange(P[i][0] - 10, P[i][0] + 10, 0.05) # 20m around current pose
+		y_range = np.arange(P[i][1] - 10, P[i][1] + 10, 0.05) # 20m around current pose
+		c = MU2.mapCorrelation(m['map'], x_im, y_im, z_globalFrame, x_range, y_range)[0]
 
 		# Update the weight of the particle
 		logWW[i] = logWW[i] + calCorrelationValue(c)
@@ -149,15 +150,18 @@ def slam(lidar, joint):
 
 		W = localizationUpdate(P, W, z_headFrame, Map, trans)
 
-		P, W = resampleIfNeeded(P, W, numParticles)
-
 		showMaps(P, W, Map)
+
+		P, W = resampleIfNeeded(P, W, numParticles)
 
 ################################################################################################
 
 def runSlam():
 	lidarFile = 'Proj4_2018_Train/data/train_lidar0'
 	jointFile = 'Proj4_2018_Train/data/train_joint0'
+
+	plt.ion()
+	plt.show()
 
 	lidar = ld.get_lidar(lidarFile)
 	joint = ld.get_joint(jointFile)

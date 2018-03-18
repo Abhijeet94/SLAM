@@ -71,7 +71,9 @@ def randomExperiment():
 ################################################################################################
 
 def showMaps(P, W, Map):
-	pass
+	#plot map
+	fig2 = plt.figure(1);
+	plt.imshow(Map['map'],cmap="hot");
 
 def calCorrelationValue(c):
 	return np.sum(c)
@@ -83,7 +85,7 @@ def smartPlus(a, b):
 	res = np.zeros((3, 1))	
 	thetaT = b[2]
 	res[2, 0] = b[2] + a[2]
-	R = np.array([[np.cos(thetaT), -np.sin(thetaT)], [np.sin(thetaT), np.cos(thetaT)]])
+	R = np.array([[np.cos(thetaT), -np.sin(thetaT)], [np.sin(thetaT), np.cos(thetaT)]]).reshape(2,2)
 	res[0:2] = b[0:2].reshape(2, 1) + np.matmul(R, a[0:2]).reshape(2, 1)
 	return res
 
@@ -94,7 +96,7 @@ def smartMinus(a, b):
 	res = np.zeros((3, 1))	
 	thetaT = b[2]
 	res[2, 0] = a[2] - b[2]
-	R = np.array([[np.cos(thetaT), np.sin(thetaT)], [-np.sin(thetaT), np.cos(thetaT)]])
+	R = np.array([[np.cos(thetaT), np.sin(thetaT)], [-np.sin(thetaT), np.cos(thetaT)]]).reshape(2,2)
 	res[0:2] = np.matmul(R, a[0:2] - b[0:2])
 	return res
 
@@ -108,18 +110,18 @@ def getCellsFromPhysicalGlobalCoordinates(z_globalFrame, Map):
 	# convert from meters to cells
 	x_cell = np.ceil((z_globalFrame[0] - Map['xmin']) / Map['res']).astype(np.int16) - 1
 	y_cell = np.ceil((z_globalFrame[1] - Map['ymin']) / Map['res']).astype(np.int16) - 1
-	return np.concatenate((x_cell, y_cell), axis=0)
+	return np.concatenate([x_cell.reshape(1, x_cell.size), y_cell.reshape(1, y_cell.size)], axis=0)
 
 def transformLidarH2B(transfAngles, z, angles):
 	yaw_head, pitch_head, roll_body, pitch_body, yaw_body = transfAngles
-
 	# p1 is cartesian coordinate in neck frame 
 	# (to go from head to neck frame, just add neck distance in z-direction)
 	# p1 is (3 X z.size)
-	p1 = np.zeros((3, z.size))
+	z_size = z.size
+	p1 = np.zeros((3, z_size))
 	p1[0] = np.multiply(z, np.cos(angles))
 	p1[1] = np.multiply(z, np.sin(angles))
-	p1[2] = -0.15 # Lidar to neck distance, to transform to neck frame for head frame
+	p1[2] = 0.15 # Lidar to neck distance, to transform to neck frame for head frame
 
 	rotz = np.array([[np.cos(yaw_head), -np.sin(yaw_head), 0], \
 		[np.sin(yaw_head), np.cos(yaw_head), 0], \
@@ -130,11 +132,11 @@ def transformLidarH2B(transfAngles, z, angles):
 		[-np.sin(pitch_head), 0, np.cos(pitch_head)]])
 
 	# p2 is in body frame
-	# p2 is (3 X z.size)
-	p2 = np.matmul(np.matmul(rotz, roty), p1.T).T
-	p2[2] = p2[2] - 1.26 # Neck to body frame (distance of 1.26m neck to body origin at ground)
+	# p2 is (3 X z_size)
+	p2 = np.matmul(np.matmul(rotz, roty), p1.T.reshape(z_size, 3, 1)).reshape(z_size, 3).T
+	p2[2] = p2[2] + 1.26 # Neck to body frame (distance of 1.26m neck to body origin at ground)
 
-	# p2 is (3 X z.size)
+	# p2 is (3 X z_size)
 	return p2
 
 def transformLidarB2G(pose, z_bodyFrame):
@@ -148,15 +150,16 @@ def transformLidarB2G(pose, z_bodyFrame):
 		[0, 0, 1, 0], \
 		[0, 0, 0, 1]])
 
-	# z_bodyFrame is assumed to be (3 X z_bodyFrame.shape[1])
+	# z_bodyFrame is assumed to be (3 X z_bodyFrame.shape[1]), changing to (4 X z_bodyFrame.shape[1])
 	z_bodyFrame = np.concatenate((z_bodyFrame, np.ones((1, z_bodyFrame.shape[1]))), axis=0)
-	z_globalFrame = np.matmul(tB2G, z_bodyFrame.T).T
+	z_bfSize = z_bodyFrame.shape[1]
+	z_globalFrame = np.matmul(tB2G, z_bodyFrame.T.reshape(z_bfSize, 4, 1)).reshape(z_bfSize, 4).T
 	return z_globalFrame[0:3]
 
 def transformLidarH2G(transfAngles, pose, z, angles):
 	# Transform z to global frame from head frame
 	z_bodyFrame = transformLidarH2B(transfAngles, z, angles)
-	z_globalFrame = transformLidarB2G()
+	z_globalFrame = transformLidarB2G(pose, z_bodyFrame)
 	return z_globalFrame
 
 def getGroundIndices(transfAngles, pose, z, angles):
@@ -170,7 +173,33 @@ def getGoodIndicesLaserScan(transfAngles, pose, z, angles):
 	return np.logical_and(indValid, ~indGround)
 
 def updateMapLogOdds(m, z_occCells, z_freeCells):
-	pass
+	# z_occCells is (2 X z_occCells.shape[1]) array
+	# z_freeCells is (2 X z_freeCells.shape[1]) array
+	z_occCells = z_occCells.astype(np.int16)
+	z_freeCells = z_freeCells.astype(np.int16)
+
+	deltaLogOddsFreeCell = -0.04
+	xis = np.logical_and((z_freeCells[0] >= 0), (z_freeCells[0] < m['sizex']))
+	yis = np.logical_and((z_freeCells[1] >= 0), (z_freeCells[1] < m['sizey']))
+	valIndices = np.logical_and(xis, yis)
+	m['map'][z_freeCells[0][valIndices]][z_freeCells[1][valIndices]] = \
+	m['map'][z_freeCells[0][valIndices]][z_freeCells[1][valIndices]] + deltaLogOddsFreeCell
+
+	deltaLogOddsOccCell = 0.4
+	xis = np.logical_and((z_occCells[0] >= 0), (z_occCells[0] < m['sizex']))
+	yis = np.logical_and((z_occCells[1] >= 0), (z_occCells[1] < m['sizey']))
+	valIndices = np.logical_and(xis, yis)
+	m['map'][z_occCells[0][valIndices]][z_occCells[1][valIndices]] = \
+	m['map'][z_occCells[0][valIndices]][z_occCells[1][valIndices]] + deltaLogOddsOccCell
+
+	lowerBound = -255
+	upperBound = 255
+	ind = m['map'] > upperBound
+	m['map'][ind] = upperBound
+	ind = m['map'] < lowerBound
+	m['map'][ind] = lowerBound
+
+	return m
 
 def getMLEParticle(P, W):
 	return P[np.argmax(W)]
@@ -182,14 +211,14 @@ def getDataAtSameTimestamp(lidar, joint):
 	for i in range(len(lidar)):
 		lidarTimesSeries[i] = lidar[i]['t'][0][0]
 
-	ji, li = getSynchArrays(jointTimeSeries, lidarTimesSeries)
+	ji, li = getSynchArrays(jointTimeSeries.reshape(1, jointTimeSeries.size), lidarTimesSeries.reshape(1, lidarTimesSeries.size))
 
-	joint['ts'][:] = joint['ts'][:][ji]
-	joint['rpy'][:] = joint['rpy'][:][ji]
-	joint['head_angles'][:] = joint['head_angles'][:][ji]
-	joint['acc'][:] = joint['acc'][:][ji]
-	joint['gyro'][:] = joint['gyro'][:][ji]
+	joint['ts'] = joint['ts'][:, ji]
+	joint['rpy'] = joint['rpy'][:, ji]
+	joint['head_angles'] = joint['head_angles'][:, ji]
+	joint['acc'] = joint['acc'][:, ji]
+	joint['gyro'] = joint['gyro'][:, ji]
 
-	lidar = lidar[li]
+	lidar = [lidar[i] for i in li]
 
 	return lidar, joint
