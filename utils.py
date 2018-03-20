@@ -70,10 +70,33 @@ def randomExperiment():
 
 ################################################################################################
 
-def showMaps(P, W, Map):
-	#plot map
-	fig2 = plt.figure(1);
-	plt.imshow(Map['map'],cmap="hot");
+fig = plt.figure()
+
+def showMaps(P, W, Map, poseHistoryX, poseHistoryY):
+	# Plot map
+	m = (Map['map'] - 5.54)/5
+	plt.imshow(np.exp(m), cmap="hot")
+
+	# Plot robot path
+	plt.plot(poseHistoryY, poseHistoryX, 'bo')
+
+	fig.canvas.draw()
+	fig.canvas.flush_events()
+	fig.show()
+
+def mapCorrelationSimple(Map, poseXcell, poseYcell, z_occCells):
+	cell_x_start = 0#int(max(poseXcell - 100, 0))
+	cell_x_end = Map['sizex'] - 1#int(min(poseXcell + 100, Map['sizex'] - 1))
+
+	cell_y_start = 0#int(max(poseYcell - 100, 0))
+	cell_y_end = Map['sizey'] - 1#int(min(poseYcell + 100, Map['sizey'] - 1))
+
+	# roi = Map['map'][cell_x_start : cell_x_end, cell_y_start : cell_y_end]
+
+	zocc_x = np.logical_and(z_occCells[0] <= cell_x_end, z_occCells[0] >= cell_x_start)
+	zocc_y = np.logical_and(z_occCells[1] <= cell_y_end, z_occCells[1] >= cell_y_start)
+	zocci = np.logical_and(zocc_x, zocc_y)
+	return Map['map'][z_occCells[0, zocci], z_occCells[1, zocci]]
 
 def calCorrelationValue(c):
 	return np.sum(c)
@@ -83,10 +106,10 @@ def smartPlus(a, b):
 	b = b.reshape(3, 1)
 	
 	res = np.zeros((3, 1))	
-	thetaT = b[2]
-	res[2, 0] = b[2] + a[2]
+	thetaT = a[2, 0]
+	res[2, 0] = b[2, 0] + a[2, 0]
 	R = np.array([[np.cos(thetaT), -np.sin(thetaT)], [np.sin(thetaT), np.cos(thetaT)]]).reshape(2,2)
-	res[0:2] = b[0:2].reshape(2, 1) + np.matmul(R, a[0:2]).reshape(2, 1)
+	res[0:2] = a[0:2].reshape(2, 1) + np.matmul(R, b[0:2]).reshape(2, 1)
 	return res
 
 def smartMinus(a, b):
@@ -94,15 +117,16 @@ def smartMinus(a, b):
 	b = b.reshape(3, 1)
 
 	res = np.zeros((3, 1))	
-	thetaT = b[2]
-	res[2, 0] = a[2] - b[2]
+	thetaT = b[2, 0]
+	res[2, 0] = min(a[2, 0] - b[2, 0], 2 * np.pi - a[2, 0] - b[2, 0])
 	R = np.array([[np.cos(thetaT), np.sin(thetaT)], [-np.sin(thetaT), np.cos(thetaT)]]).reshape(2,2)
 	res[0:2] = np.matmul(R, a[0:2] - b[0:2])
 	return res
 
 def getGaussianNoise():
 	mean = [0, 0, 0]
-	cov = np.array([[0.05, 0, 0], [0, 0.05, 0], [0, 0, 0.4]])
+	# return np.array(mean)
+	cov = np.array([[0.05, 0, 0], [0, 0.05, 0], [0, 0, 0.05]])
 	return np.random.multivariate_normal(mean, cov)
 
 def getCellsFromPhysicalGlobalCoordinates(z_globalFrame, Map):
@@ -162,14 +186,14 @@ def transformLidarH2G(transfAngles, pose, z, angles):
 	z_globalFrame = transformLidarB2G(pose, z_bodyFrame)
 	return z_globalFrame
 
-def getGroundIndices(transfAngles, pose, z, angles):
+def getGroundIndices(transfAngles, z, angles):
 	z_bodyFrame = transformLidarH2B(transfAngles, z, angles)
 	return (z_bodyFrame[2] < (0 + 0.1)) # Taking some ground threshold
 
-def getGoodIndicesLaserScan(transfAngles, pose, z, angles):
+def getGoodIndicesLaserScan(transfAngles, z, angles):
 	# Indices (of angles or z) that are too close, far, or hit the ground
 	indValid = np.logical_and((z < 30), (z > 0.1))
-	indGround = getGroundIndices(transfAngles, pose, z, angles)
+	indGround = getGroundIndices(transfAngles, z, angles)
 	return np.logical_and(indValid, ~indGround)
 
 def updateMapLogOdds(m, z_occCells, z_freeCells):
@@ -178,22 +202,22 @@ def updateMapLogOdds(m, z_occCells, z_freeCells):
 	z_occCells = z_occCells.astype(np.int16)
 	z_freeCells = z_freeCells.astype(np.int16)
 
-	deltaLogOddsFreeCell = -0.04
+	deltaLogOddsFreeCell = -0.004
 	xis = np.logical_and((z_freeCells[0] >= 0), (z_freeCells[0] < m['sizex']))
 	yis = np.logical_and((z_freeCells[1] >= 0), (z_freeCells[1] < m['sizey']))
 	valIndices = np.logical_and(xis, yis)
-	m['map'][z_freeCells[0][valIndices]][z_freeCells[1][valIndices]] = \
-	m['map'][z_freeCells[0][valIndices]][z_freeCells[1][valIndices]] + deltaLogOddsFreeCell
+	m['map'][z_freeCells[0][valIndices], z_freeCells[1][valIndices]] = \
+	m['map'][z_freeCells[0][valIndices], z_freeCells[1][valIndices]] + deltaLogOddsFreeCell
 
-	deltaLogOddsOccCell = 0.4
+	deltaLogOddsOccCell = 0.04
 	xis = np.logical_and((z_occCells[0] >= 0), (z_occCells[0] < m['sizex']))
 	yis = np.logical_and((z_occCells[1] >= 0), (z_occCells[1] < m['sizey']))
 	valIndices = np.logical_and(xis, yis)
-	m['map'][z_occCells[0][valIndices]][z_occCells[1][valIndices]] = \
-	m['map'][z_occCells[0][valIndices]][z_occCells[1][valIndices]] + deltaLogOddsOccCell
+	m['map'][z_occCells[0][valIndices], z_occCells[1][valIndices]] = \
+	m['map'][z_occCells[0][valIndices], z_occCells[1][valIndices]] + deltaLogOddsOccCell
 
-	lowerBound = -255
-	upperBound = 255
+	lowerBound = -5.54
+	upperBound = 5.54
 	ind = m['map'] > upperBound
 	m['map'][ind] = upperBound
 	ind = m['map'] < lowerBound

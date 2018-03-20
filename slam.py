@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import io
 import matplotlib.image as mpimg
+import time
+from scipy.misc import logsumexp
 
 sys.path.insert(0,'Proj4_2018_Train')
 sys.path.insert(0,'Proj4_2018_Train/MapUtils')
@@ -29,7 +31,7 @@ def initSlam(lidar, joint, numParticles):
 	MAP['ymax']  =  20 
 	MAP['sizex']  = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1)) #cells
 	MAP['sizey']  = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
-	MAP['map'] = np.zeros((MAP['sizex'],MAP['sizey']),dtype=np.int8)
+	MAP['map'] = np.zeros((MAP['sizex'],MAP['sizey']))
 
 	return P, W, MAP
 
@@ -44,7 +46,7 @@ def mapping(z, p, transfAngles, m):
 	angles = np.array(np.arange(135,-135.25,-0.25)*np.pi/180.)
 
 	# Remove scan points that are too close, far, or hit the ground
-	zi = getGoodIndicesLaserScan(transfAngles, p, z, angles)
+	zi = getGoodIndicesLaserScan(transfAngles, z, angles)
 	z = z[zi]
 	angles = angles[zi]
 
@@ -87,25 +89,30 @@ def localizationPrediction(P, o_t, o_t1):
 # Returns: w_(t+1) - Weight of all 'n' particles at time 't+1'
 def localizationUpdate(P, W, z, m, transfAngles):
 	logWW = np.log(W)
+	angles = np.array(np.arange(135,-135.25,-0.25)*np.pi/180.)
+
+	# Remove scan points that are too close, far, or hit the ground
+	zi = getGoodIndicesLaserScan(transfAngles, z, angles)
+	z = z[zi]
+	angles = angles[zi]
 
 	# For each particle
 	for i in range(P.shape[0]):
-		angles = np.array(np.arange(135,-135.25,-0.25)*np.pi/180.)
-
-		# Remove scan points that are too close, far, or hit the ground
-		zi = getGoodIndicesLaserScan(transfAngles, P[i], z, angles)
-		z = z[zi]
-		angles = angles[zi]
 
 		# Transform z to global frame
 		z_globalFrame = transformLidarH2G(transfAngles, P[i], z, angles)
 
 		# Compute correlation of the scan points with the map
-		x_im = np.arange(m['xmin'], m['xmax'] + m['res'], m['res'])
-		y_im = np.arange(m['ymin'], m['ymax'] + m['res'], m['res'])
-		x_range = np.arange(P[i][0] - 10, P[i][0] + 10, 0.05) # 20m around current pose
-		y_range = np.arange(P[i][1] - 10, P[i][1] + 10, 0.05) # 20m around current pose
-		c = MU2.mapCorrelation(m['map'], x_im, y_im, z_globalFrame, x_range, y_range)[0]
+		# x_im = np.arange(m['xmin'], m['xmax'] + m['res'], m['res'])
+		# y_im = np.arange(m['ymin'], m['ymax'] + m['res'], m['res'])
+		# x_range = np.arange(P[i][0] - 1, P[i][0] + 1, m['res']) # 2m around current pose
+		# y_range = np.arange(P[i][1] - 1, P[i][1] + 1, m['res']) # 2m around current pose
+		# c = MU2.mapCorrelation(m['map'], x_im, y_im, z_globalFrame, x_range, y_range)[0]
+		#####
+		poseXcell = np.ceil((P[i][0] - m['xmin']) / m['res']) - 1
+		poseYcell = np.ceil((P[i][1] - m['ymin']) / m['res']) - 1
+		z_occCells = getCellsFromPhysicalGlobalCoordinates(z_globalFrame, m)
+		c = mapCorrelationSimple(m, poseXcell, poseYcell, z_occCells)
 
 		# Update the weight of the particle
 		logWW[i] = logWW[i] + calCorrelationValue(c)
@@ -118,10 +125,11 @@ def localizationUpdate(P, W, z, m, transfAngles):
 # - numParticles - number of particles to return
 # Returns: (P, W) - new particles and their weights
 def resampleIfNeeded(P, W, numParticles):
-	nEffective = 1.0/(np.sum(np.square(W)))
+	nEffective = np.square(np.sum(W)) * 1.0 / (np.sum(np.square(W)))
 	nThreshold = numParticles * 0.4
 
 	if nEffective < nThreshold:
+		# print 'n_eff is low: ' + str(nEffective)
 		PP = np.zeros(P.shape)
 		WW = np.ones(numParticles) * (1.0/numParticles)
 
@@ -137,36 +145,57 @@ def slam(lidar, joint):
 	numParticles = 200
 	lidar, joint = getDataAtSameTimestamp(lidar, joint)
 	P, W, Map = initSlam(lidar, joint, numParticles)
+	poseHistoryX = []
+	poseHistoryY = []
 
 	for t in xrange(len(lidar) - 1):
+		# print 'Time step: ' + str(t)
 		z_headFrame = lidar[t]['scan'][0]
 		trans = (joint['head_angles'][0][t], joint['head_angles'][1][t], joint['rpy'][0][t], joint['rpy'][1][t], joint['rpy'][2][t])
 
 		p_mle = getMLEParticle(P, W) 
+		poseHistoryX.append(np.ceil((p_mle[0] - Map['xmin']) / Map['res']) - 1)
+		poseHistoryY.append(np.ceil((p_mle[1] - Map['xmin']) / Map['res']) - 1)
 
+		start = time.time()
 		Map = mapping(z_headFrame, p_mle, trans, Map)
+		# print 'Mapping time: ' + str(time.time() - start)
 
+		start = time.time()
 		P = localizationPrediction(P, lidar[t]['pose'][0], lidar[t+1]['pose'][0])
+		# print 'Location Prediction time: ' + str(time.time() - start)
 
+		# print 'localization update started'
+		start = time.time()
 		W = localizationUpdate(P, W, z_headFrame, Map, trans)
+		# print 'Location Update time: ' + str(time.time() - start)
+		# print 'localization update done'
 
-		showMaps(P, W, Map)
+		if t % 500 == 0:
+			start = time.time()
+			showMaps(P, W, Map, poseHistoryX, poseHistoryY)
+			print 'Map drawing time: ' + str(time.time() - start)
 
 		P, W = resampleIfNeeded(P, W, numParticles)
+
+	return P, W, Map, poseHistoryX, poseHistoryY
 
 ################################################################################################
 
 def runSlam():
-	lidarFile = 'Proj4_2018_Train/data/train_lidar0'
-	jointFile = 'Proj4_2018_Train/data/train_joint0'
+	lidarFile = 'Proj4_2018_Train/data/train_lidar1'
+	jointFile = 'Proj4_2018_Train/data/train_joint1'
 
 	plt.ion()
-	plt.show()
+	# plt.show()
 
 	lidar = ld.get_lidar(lidarFile)
 	joint = ld.get_joint(jointFile)
 
-	slam(lidar, joint)
+	P, W, Map, poseHistoryX, poseHistoryY = slam(lidar, joint)
+	showMaps(P, W, Map, poseHistoryX, poseHistoryY)
+	print 'Done'
+	plt.show(block=True)
 
 if __name__ == "__main__":
 	# replayLidarData()
