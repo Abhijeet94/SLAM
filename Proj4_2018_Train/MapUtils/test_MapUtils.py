@@ -3,12 +3,14 @@ import matplotlib.pyplot as plt
 from scipy import io
 import matplotlib.image as mpimg
 import MapUtils as MU
+import MapUtils2 as MU2
 from mpl_toolkits.mplot3d import Axes3D
 import time
+import pdb
 
 # todo load mat
 #load train_lidar0.mat;
-dataIn = io.loadmat("train_lidar0.mat")
+dataIn = io.loadmat("../data/train_lidar0.mat")
 
 angles = np.array([np.arange(-135,135.25,0.25)*np.pi/180.]).T
 ranges = np.double(dataIn['lidar'][0][110]['scan'][0][0]).T
@@ -46,8 +48,8 @@ indGood = np.logical_and(np.logical_and(np.logical_and((xis > 1), (yis > 1)), (x
 ##inds = sub2ind(size(MAP.map),xis(indGood),yis(indGood));
 MAP['map'][xis[0][indGood[0]],yis[0][indGood[0]]]=1    # Maybe this is a problem
 
-x_im = np.arange(MAP['xmin'],MAP['xmax']+MAP['res'],MAP['res']) #x-positions of each pixel of the map
-y_im = np.arange(MAP['ymin'],MAP['ymax']+MAP['res'],MAP['res']) #y-positions of each pixel of the map
+x_im = np.arange(MAP['xmin'], MAP['xmax'] + MAP['res'], MAP['res']) #x-positions of each pixel of the map
+y_im = np.arange(MAP['ymin'], MAP['ymax'] + MAP['res'], MAP['res']) #y-positions of each pixel of the map
 
 x_range = np.arange(-0.2,0.2+0.05,0.05)
 y_range = np.arange(-0.2,0.2+0.05,0.05)

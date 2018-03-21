@@ -140,7 +140,7 @@ def resampleIfNeeded(P, W, numParticles):
 		WW = np.ones(numParticles) * (1.0/numParticles)
 
 		for i in range(numParticles):
-			PP[i] = P[np.argmin((np.cumsum(W) * 1.0 / np.sum(W)) < np.random.random_sample())]
+			PP[i] = P[np.argmin((np.cumsum(W) * 1.0 / np.sum(W)) < np.random.uniform())]
 
 		P = PP
 		W = WW
@@ -156,11 +156,14 @@ def slam(lidar, joint):
 	poseHistoryX = []
 	poseHistoryY = []
 	step = 5
+	startPos =  0#40 * 500
 
-	for t in xrange(0, len(lidar) - step * 2, step):
-		# print 'Time step: ' + str(t)
+	for t in xrange(startPos, len(lidar) - step * 2, step):
+		# print 'Time step: ' + str(t) + ', Pose:\t' + str(getMLEParticle(P, W))
 		z_headFrame = lidar[t]['scan'][0]
 		trans = (joint['head_angles'][0][t], joint['head_angles'][1][t], joint['rpy'][0][t], joint['rpy'][1][t], joint['rpy'][2][t])
+		# print 'Yaw: ' + str(smartMinus(lidar[t+step]['pose'][0], lidar[t]['pose'][0])[2])
+		# print 'Body - ' + str(joint['rpy'][0][t]) + ', ' + str(joint['rpy'][1][t])
 
 		p_mle = getMLEParticle(P, W) 
 		poseHistoryX.append(np.ceil((p_mle[0] - Map['xmin']) / Map['res']) - 1)

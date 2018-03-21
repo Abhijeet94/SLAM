@@ -126,7 +126,6 @@ def smartMinus(a, b):
 
 	res = np.zeros((3, 1))	
 	thetaT = b[2, 0]
-	# res[2, 0] = min(a[2, 0] - b[2, 0], 2 * np.pi - a[2, 0] - b[2, 0])
 	res[2, 0] = (a[2, 0] - b[2, 0])
 	R = np.array([[np.cos(thetaT), np.sin(thetaT)], [-np.sin(thetaT), np.cos(thetaT)]]).reshape(2,2)
 	res[0:2] = np.matmul(R, a[0:2] - b[0:2])
@@ -135,7 +134,7 @@ def smartMinus(a, b):
 def getGaussianNoise():
 	mean = [0, 0, 0]
 	# return np.array(mean)
-	cov = np.array([[0.01, 0, 0], [0, 0.01, 0], [0, 0, 0.05]])
+	cov = np.array([[0.001, 0, 0], [0, 0.001, 0], [0, 0, 0.005]])
 	return np.random.multivariate_normal(mean, cov)
 
 def getCellsFromPhysicalGlobalCoordinates(z_globalFrame, Map):
@@ -172,11 +171,29 @@ def transformLidarH2B(transfAngles, z, angles):
 	# p2 is (3 X z_size)
 	return p2
 
-def transformLidarB2G(pose, z_bodyFrame):
+def useBodyRollPitch(transfAngles, pose, z_bodyFrame):
+	yaw_head, pitch_head, roll_body, pitch_body, yaw_body = transfAngles
+	R_bP = np.array([[np.cos(pitch_body), 0, np.sin(pitch_body)], \
+		[0, 1, 0], \
+		[-np.sin(pitch_body), 0, np.cos(pitch_body)]])
+	R_bR = np.array([[1, 0, 0], \
+		[0, np.cos(yaw_body), -np.sin(yaw_body)], \
+		[0, np.sin(yaw_body), np.cos(yaw_body)]])
+
+	z_bodyFrame[2, :] = z_bodyFrame[2, :] - (0.93 - 0.16)
+
+	z_size = z_bodyFrame.shape[1]
+	z_bodyFrame = np.matmul(np.matmul(R_bP, R_bR), z_bodyFrame.T.reshape(z_size, 3, 1)).reshape(z_size, 3).T
+	z_bodyFrame[2, :] = z_bodyFrame[2, :] + (0.93 - 0.16)
+	return z_bodyFrame
+
+def transformLidarB2G(transfAngles, pose, z_bodyFrame):
 	pose = pose.reshape(3)
 	x = pose[0]
 	y = pose[1]
 	theta = pose[2]
+
+	# z_bodyFrame = useBodyRollPitch(transfAngles, pose, z_bodyFrame)
 
 	tB2G = np.array([[np.cos(theta), -np.sin(theta), 0, x], \
 		[np.sin(theta), np.cos(theta), 0, y], \
@@ -192,7 +209,7 @@ def transformLidarB2G(pose, z_bodyFrame):
 def transformLidarH2G(transfAngles, pose, z, angles):
 	# Transform z to global frame from head frame
 	z_bodyFrame = transformLidarH2B(transfAngles, z, angles)
-	z_globalFrame = transformLidarB2G(pose, z_bodyFrame)
+	z_globalFrame = transformLidarB2G(transfAngles, pose, z_bodyFrame)
 	return z_globalFrame
 
 def getGroundIndices(transfAngles, z, angles):
