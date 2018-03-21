@@ -235,7 +235,7 @@ def updateMapLogOdds(m, z_occCells, z_freeCells):
 	m['map'][z_freeCells[0][valIndices], z_freeCells[1][valIndices]] = \
 	m['map'][z_freeCells[0][valIndices], z_freeCells[1][valIndices]] + deltaLogOddsFreeCell
 
-	deltaLogOddsOccCell = 0.05
+	deltaLogOddsOccCell = 0.08
 	xis = np.logical_and((z_occCells[0] >= 0), (z_occCells[0] < m['sizex']))
 	yis = np.logical_and((z_occCells[1] >= 0), (z_occCells[1] < m['sizey']))
 	valIndices = np.logical_and(xis, yis)

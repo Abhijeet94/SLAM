@@ -25,10 +25,10 @@ def initSlam(lidar, joint, numParticles):
 	# init MAP
 	MAP = {}
 	MAP['res']   = 0.05 #meters
-	MAP['xmin']  = -20  #meters
-	MAP['ymin']  = -20
-	MAP['xmax']  =  20
-	MAP['ymax']  =  20 
+	MAP['xmin']  = -22  #meters
+	MAP['ymin']  = -22
+	MAP['xmax']  =  22
+	MAP['ymax']  =  22 
 	MAP['sizex']  = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1)) #cells
 	MAP['sizey']  = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
 	MAP['map'] = np.zeros((MAP['sizex'],MAP['sizey']))
@@ -195,8 +195,8 @@ def slam(lidar, joint):
 ################################################################################################
 
 def runSlam():
-	lidarFile = 'Proj4_2018_Train/data/train_lidar1'
-	jointFile = 'Proj4_2018_Train/data/train_joint1'
+	lidarFile = 'Proj4_2018_Train/data/train_lidar0'
+	jointFile = 'Proj4_2018_Train/data/train_joint0'
 
 	plt.ion()
 	# plt.show()
