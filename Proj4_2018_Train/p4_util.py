@@ -55,7 +55,7 @@ def replay_depth(depth_data):
 		plt.pause(0.001)
 
 def replay_rgb(rgb_data):
-	for k in xrange(len(rgb_data)):
+	for k in xrange(100, len(rgb_data)):
 		R = rgb_data[k]['image']
 		R = np.flip(R,1)
 

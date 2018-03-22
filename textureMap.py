@@ -35,19 +35,19 @@ def replayRGBData():
 ################################################################################################
 
 def camera2originalFrame(arr):
-	R = np.array([[0, -1, 0], \
-		[0, 0, -1], \
-		[1, 0, 0]])
+	R = np.array([[0, 0, 1], \
+		[-1, 0, 0], \
+		[0, -1, 0]])
 
 	lenx = arr.shape[0]
 	leny = arr.shape[1]
 	arr = np.matmul(R, arr.reshape(lenx, leny, 3, 1)).reshape(lenx, leny, 3)
-	return arr
+	return arr	
 
 def original2cameraFrame(arr):
-	R = np.array([[0, 0, 1], \
-		[-1, 0, 0], \
-		[0, -1, 0]])
+	R = np.array([[0, -1, 0], \
+		[0, 0, -1], \
+		[1, 0, 0]])
 
 	lenx = arr.shape[0]
 	leny = arr.shape[1]
@@ -62,6 +62,9 @@ def transformKinectH2B(constants, depthImage):
 	depthArray = np.transpose(np.indices((u_len, v_len)), (1, 2, 0))
 	depthArray = np.dstack((depthArray, depthImage))
 
+	depthArray[:, :, 0] = depthArray[:, :, 0] - (v_len/2.0)
+	depthArray[:, :, 1] = depthArray[:, :, 1] - (u_len/2.0)
+
 	fu = constants['fu_depth']
 	fv = constants['fv_depth']
 
@@ -71,6 +74,7 @@ def transformKinectH2B(constants, depthImage):
 	depthArray_cart[:, :, 2] = depthArray[:, :, 2]
 	# depthArray_cart now consists of cartesian coordinates in camera frame
 	# We need to rotate it to the body frame
+	pdb.set_trace()
 
 	depthArray_cart = camera2originalFrame(depthArray_cart)
 	depthArray_cart[:, :, 2] = depthArray[:, :, 2] + constants['camera2neck_distance']
@@ -165,16 +169,21 @@ def showTextureMap(depth, rgb, depthIndex, p_mle, Map, constants, TM):
 	depthData = depth[depthIndex]
 	rgbData = rgb[depthIndex]
 
-	depthArray_global = transformKinectH2G(constants, p_mle, depthData['depth']) # in original axes
-	colors = getRGBforDepthPixels(depthData['depth'], rgbData['image'], constants)
+	depthArray_global = transformKinectH2G(constants, p_mle, depthData['depth']/1000.0) # in original axes
+	colors = getRGBforDepthPixels(depthData['depth']/1000.0, rgbData['image'], constants)
 
 	vi = depthArray_global[:, :, 2] < 0.025 # ground indices
+	print '1) ' + str(np.sum(vi))
 	vi = np.logical_and(vi, depthArray_global[:, :, 0] >= Map['xmin'])
 	vi = np.logical_and(vi, depthArray_global[:, :, 0] <= Map['xmax'])
+	print '2) ' + str(np.sum(vi))
 	vi = np.logical_and(vi, depthArray_global[:, :, 1] >= Map['ymin'])
 	vi = np.logical_and(vi, depthArray_global[:, :, 1] <= Map['ymax'])
+	print '3) ' + str(np.sum(vi))
 	vi_colors = colors[:, :, 0] != -1
+	print '4) ' + str(np.sum(vi_colors))
 	vi = np.logical_and(vi, vi_colors)
+	print '5) ' + str(np.sum(vi))
 
 	xis = np.ceil((depthArray_global[vi, 0] - Map['xmin']) / Map['res'] ).astype(np.int16)-1
 	yis = np.ceil((depthArray_global[vi, 1] - Map['ymin']) / Map['res'] ).astype(np.int16)-1
@@ -216,14 +225,14 @@ def slamWithTM(lidar, joint, depth, rgb):
 	constants = {}
 	constants['neck2ground_distance'] = 1.26
 	constants['camera2neck_distance'] = 0.07
-	constants['fu_depth'] = IRData['fc'][0]
-	constants['fv_depth'] = IRData['fc'][1]
-	constants['fu_rgb'] = RGBData['fc'][0]
-	constants['fv_rgb'] = RGBData['fc'][1]
-	constants['cc_depth'] = IRData['cc']
-	constants['cc_rgb'] = RGBData['cc']
+	constants['fu_depth'] = IRData['fc'][0]/1000.0
+	constants['fv_depth'] = IRData['fc'][1]/1000.0
+	constants['fu_rgb'] = RGBData['fc'][0]/1000.0
+	constants['fv_rgb'] = RGBData['fc'][1]/1000.0
+	constants['cc_depth'] = np.array(IRData['cc'])/1000.0
+	constants['cc_rgb'] = np.array(RGBData['cc'])/1000.0
 	constants['R'] = ExParams['R']
-	constants['T'] = ExParams['T'] / 1000
+	constants['T'] = ExParams['T'] / 1000.0
 
 	depthIndex = 0
 	prevTM = np.zeros((Map['sizex'], Map['sizey'], 3), 'uint8')
