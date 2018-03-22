@@ -195,8 +195,8 @@ def slam(lidar, joint):
 ################################################################################################
 
 def runSlam():
-	lidarFile = 'Proj4_2018_Train/data/train_lidar0'
-	jointFile = 'Proj4_2018_Train/data/train_joint0'
+	lidarFile = 'Proj4_2018_Train/data/train_lidar1'
+	jointFile = 'Proj4_2018_Train/data/train_joint1'
 
 	plt.ion()
 	# plt.show()
