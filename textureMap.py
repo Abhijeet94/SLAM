@@ -6,6 +6,7 @@ from scipy import io
 import matplotlib.image as mpimg
 import time
 from scipy.misc import logsumexp
+import pickle as pkl
 
 sys.path.insert(0,'Proj4_2018_Train')
 sys.path.insert(0,'Proj4_2018_Train/MapUtils')
@@ -33,22 +34,46 @@ def replayRGBData():
 
 ################################################################################################
 
+def camera2originalFrame(arr):
+	R = np.array([[0, -1, 0], \
+		[0, 0, -1], \
+		[1, 0, 0]])
+
+	lenx = arr.shape[0]
+	leny = arr.shape[1]
+	arr = np.matmul(R, arr.reshape(lenx, leny, 3, 1)).reshape(lenx, leny, 3)
+	return arr
+
+def original2cameraFrame(arr):
+	R = np.array([[0, 0, 1], \
+		[-1, 0, 0], \
+		[0, -1, 0]])
+
+	lenx = arr.shape[0]
+	leny = arr.shape[1]
+	arr = np.matmul(R, arr.reshape(lenx, leny, 3, 1)).reshape(lenx, leny, 3)
+	return arr
+
+################################################################################################
+
 def transformKinectH2B(constants, depthImage):
 	u_len = depthImage.shape[0]
 	v_len = depthImage.shape[1]
 	depthArray = np.transpose(np.indices((u_len, v_len)), (1, 2, 0))
 	depthArray = np.dstack((depthArray, depthImage))
-	depthArray = depthArray.reshape(u_len * v_len, 3)
 
 	fu = constants['fu_depth']
 	fv = constants['fv_depth']
 
 	depthArray_cart = np.zeros(depthArray.shape)
-	depthArray_cart[:, 0] = np.multiply(depthArray[:, 0], depthArray[:, 2]) / fu
-	depthArray_cart[:, 1] = np.multiply(depthArray[:, 1], depthArray[:, 2]) / fv
-	depthArray_cart[:, 2] = depthArray[:, 2]
+	depthArray_cart[:, :, 0] = np.multiply(depthArray[:, :, 0], depthArray[:, :, 2]) / fu
+	depthArray_cart[:, :, 1] = np.multiply(depthArray[:, :, 1], depthArray[:, :, 2]) / fv
+	depthArray_cart[:, :, 2] = depthArray[:, :, 2]
 	# depthArray_cart now consists of cartesian coordinates in camera frame
 	# We need to rotate it to the body frame
+
+	depthArray_cart = camera2originalFrame(depthArray_cart)
+	depthArray_cart[:, :, 2] = depthArray[:, :, 2] + constants['camera2neck_distance']
 
 	yaw_head = constants['yaw_head']
 	pitch_head = constants['pitch_head']
@@ -61,8 +86,8 @@ def transformKinectH2B(constants, depthImage):
 		[0, 1, 0], \
 		[-np.sin(pitch_head), 0, np.cos(pitch_head)]])
 
-	depthArray_cart_body = np.matmul(np.matmul(rotz, roty), depthArray_cart.reshape(u_len * v_len, 3, 1)).reshape(u_len * v_len, 3)
-	depthArray_cart_body[2] = depthArray_cart_body[2] + constants['camera2ground_distance']
+	depthArray_cart_body = np.matmul(np.matmul(rotz, roty), depthArray_cart.reshape(u_len, v_len, 3, 1)).reshape(u_len, v_len, 3)
+	depthArray_cart_body[:, :, 2] = depthArray_cart_body[:, :, 2] + constants['neck2ground_distance']
 	return depthArray_cart_body
 
 def transformKinectB2G(constants, pose, depthArray_body):
@@ -75,16 +100,17 @@ def transformKinectB2G(constants, pose, depthArray_body):
 		[0, 0, 1, 0], \
 		[0, 0, 0, 1]])
 
-	depthArray_body = np.concatenate((depthArray_body, np.ones((depthArray_body.shape[0], 1))), axis=1)
-	depthArray_bodySize = depthArray_body.shape[0]
-	depthArray_global = np.matmul(tB2G, depthArray_body.reshape(depthArray_bodySize, 4, 1)).reshape(depthArray_bodySize, 4)
-	return depthArray_global[:, 0:3]
+	dabx = depthArray_body.shape[0]
+	daby = depthArray_body.shape[1]
+	depthArray_body = np.dstack((depthArray_body, np.ones((dabx, daby))))
+	depthArray_global = np.matmul(tB2G, depthArray_body.reshape(dabx, daby, 4, 1)).reshape(dabx, daby, 4)
+	return depthArray_global[:, :, 0:3]
 
 def transformKinectH2G(constants, pose, depthImage):
 	# Transform depthImage to global frame from depth camera frame
 	depthArray_body = transformKinectH2B(constants, depthImage)
 	depthArray_global = transformKinectB2G(constants, pose, depthArray_body)
-	return depthArray_global
+	return depthArray_global # this is in original frame (not in camera axis)
 
 ################################################################################################
 
@@ -103,17 +129,16 @@ def getRGBforDepthPixels(depthImage, cameraImage, constants):
 	depthArray_cart[:, :, 2] = depthArray[:, :, 2]
 	# depthArray_cart now consists of cartesian coordinates in camera frame
 
-	# CORRECT THIS !!!!
-	tD2R = np.array([[np.cos(theta), -np.sin(theta), 0, x], \
-		[np.sin(theta), np.cos(theta), 0, y], \
-		[0, 0, 1, 0], \
+	tD2R = np.array([[constants['R'][0, 0], constants['R'][0, 1], constants['R'][0, 2], constants['T'][0, 0]], \
+		[constants['R'][1, 0], constants['R'][1, 1], constants['R'][1, 2], constants['T'][1, 0]], \
+		[constants['R'][2, 0], constants['R'][2, 1], constants['R'][2, 2], constants['T'][2, 0]], \
 		[0, 0, 0, 1]])
 
 	# Adding a layer of 1's for 4d multiplication, then multiplying with Transformation matrix
 	dacx = depthArray_cart.shape[0]
 	dacy = depthArray_cart.shape[1]
 	rgb_cart = np.dstack((depthArray_cart, np.ones((dacx, dacy))))
-	rgb_cart = np.matmul(tD2R, rgb_cart.reshape(dacx, dacy, 4, 1))[:, 0:3, 0]
+	rgb_cart = np.matmul(tD2R, rgb_cart.reshape(dacx, dacy, 4, 1))[:, :, 0:3, 0]
 
 	fu = constants['fu_rgb']
 	fv = constants['fv_rgb']
@@ -140,12 +165,14 @@ def showTextureMap(depth, rgb, depthIndex, p_mle, Map, constants, TM):
 	depthData = depth[depthIndex]
 	rgbData = rgb[depthIndex]
 
-	u_len_depth = depthImage.shape[0]
-	v_len_depth = depthImage.shape[1]
-	depthArray_global = transformKinectH2G(constants, p_mle, depthData['depth']).reshape(u_len_depth, v_len_depth, 3)
+	depthArray_global = transformKinectH2G(constants, p_mle, depthData['depth']) # in original axes
 	colors = getRGBforDepthPixels(depthData['depth'], rgbData['image'], constants)
 
 	vi = depthArray_global[:, :, 2] < 0.025 # ground indices
+	vi = np.logical_and(vi, depthArray_global[:, :, 0] >= Map['xmin'])
+	vi = np.logical_and(vi, depthArray_global[:, :, 0] <= Map['xmax'])
+	vi = np.logical_and(vi, depthArray_global[:, :, 1] >= Map['ymin'])
+	vi = np.logical_and(vi, depthArray_global[:, :, 1] <= Map['ymax'])
 	vi_colors = colors[:, :, 0] != -1
 	vi = np.logical_and(vi, vi_colors)
 
@@ -182,11 +209,27 @@ def slamWithTM(lidar, joint, depth, rgb):
 	step = 5
 	startPos =  0#40 * 500
 
+	IRData = pkl.load(open('Proj4_2018_Train_rgb/cameraParam/IRcam_Calib_result.pkl', 'rb'))
+	RGBData = pkl.load(open('Proj4_2018_Train_rgb/cameraParam/RGBcamera_Calib_result.pkl', 'rb'))
+	ExParams = pkl.load(open('Proj4_2018_Train_rgb/cameraParam/exParams.pkl', 'rb'))
+
 	constants = {}
+	constants['neck2ground_distance'] = 1.26
+	constants['camera2neck_distance'] = 0.07
+	constants['fu_depth'] = IRData['fc'][0]
+	constants['fv_depth'] = IRData['fc'][1]
+	constants['fu_rgb'] = RGBData['fc'][0]
+	constants['fv_rgb'] = RGBData['fc'][1]
+	constants['cc_depth'] = IRData['cc']
+	constants['cc_rgb'] = RGBData['cc']
+	constants['R'] = ExParams['R']
+	constants['T'] = ExParams['T'] / 1000
+
 	depthIndex = 0
 	prevTM = np.zeros((Map['sizex'], Map['sizey'], 3), 'uint8')
 	while depth[depthIndex]['t'][0][0] < lidar[0]['t'][0]:
 		depthIndex = depthIndex + 1
+	print depthIndex
 
 	for t in xrange(startPos, len(lidar) - step * 2, step):
 		z_headFrame = lidar[t]['scan'][0]
@@ -204,9 +247,16 @@ def slamWithTM(lidar, joint, depth, rgb):
 		#########################################################################
 		#########################################################################
 
+		if t % 500 == 0:
+			print 'Iteration: ' + str(t)
+
 		if isTMtime(lidar, depth, t, depthIndex, step):
+			constants['yaw_head'] = depth[depthIndex]['head_angles'][0][0]
+			constants['pitch_head'] = depth[depthIndex]['head_angles'][0][0]
+
 			showTextureMap(depth, rgb, depthIndex, p_mle, Map, constants, prevTM)
 			depthIndex = depthIndex + 1
+			print depthIndex
 
 		#########################################################################
 		#########################################################################
